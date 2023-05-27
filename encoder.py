@@ -67,11 +67,11 @@ class Bottleneck(nn.Module):
 
 
 class DenseNet(nn.Module):
-    def __init__(self, growthRate, reduction, bottleneck, use_dropout):
+    def __init__(self, growthRate, reduction, bottleneck, use_dropout, inchannel=1):
         super(DenseNet, self).__init__()
         nDenseBlocks = 16
         nChannels = 2 * growthRate
-        self.conv1 = nn.Conv2d(1, nChannels, kernel_size=7, padding=3, stride=2, bias=False)
+        self.conv1 = nn.Conv2d(inchannel, nChannels, kernel_size=7, padding=3, stride=2, bias=False)
         self.dense1 = self._make_dense(nChannels, growthRate, nDenseBlocks, bottleneck, use_dropout)
         nChannels += nDenseBlocks * growthRate
         nOutChannels = int(math.floor(nChannels * reduction))

@@ -88,7 +88,89 @@ def dataIterator(feature_file, label_file, dictionary, batch_size, batch_Imagesi
     print('total ', len(feature_total), 'batch data loaded')
     return list(zip(feature_total, label_total)), uidList
 
+# 用于同时加载光流图和普通图像
+def dataIterator_online(feature_file, on_feature_file, label_file, dictionary, batch_size, batch_Imagesize, maxlen, maxImagesize):
+    # offline-train.pkl
+    fp = open(feature_file, 'rb')
+    features = pkl.load(fp)
+    fp.close()
 
+    fp = open(on_feature_file, 'rb')
+    on_features = pkl.load(fp)
+    fp.close()
+
+    # train_caption.txt
+    fp2 = open(label_file, 'r')
+    labels = fp2.readlines()
+    fp2.close()
+
+    targets = {}
+    for l in labels:
+        tmp = l.strip().split()
+        uid = tmp[0]
+        w_list = []
+        for w in tmp[1:]:
+            if dictionary.__contains__(w):
+                w_list.append(dictionary[w])
+            else:
+                print('a word not in the dictionary !! sentence ', uid, 'word ', w)
+                sys.exit()
+        targets[uid] = w_list
+
+    imageSize = {}
+    for uid, fea in features.items():
+        imageSize[uid] = fea.shape[0] * fea.shape[1]
+    # sorted by sentence length, return a list with each triple element
+    imageSize = sorted(imageSize.items(), key=lambda d: d[1])
+
+    feature_batch = []
+    on_features_batch = []
+    label_batch = []
+    feature_total = []
+    onfeature_total = []
+    label_total = []
+    uidList = []
+    biggest_image_size = 0
+
+    i = 0
+    for uid, size in imageSize:
+        if size > biggest_image_size:
+            biggest_image_size = size
+        fea = features[uid]
+        on_fea = on_features[uid]
+        lab = targets[uid]
+        batch_image_size = biggest_image_size * (i + 1)
+        if len(lab) > maxlen:
+            print('sentence', uid, 'length bigger than', maxlen, 'ignore')
+        elif size > maxImagesize:
+            print('image', uid, 'size bigger than', maxImagesize, 'ignore')
+        else:
+            uidList.append(uid)
+            if batch_image_size > batch_Imagesize or i == batch_size:  # a batch is full
+                feature_total.append(feature_batch)
+                onfeature_total.append(on_features_batch)
+                label_total.append(label_batch)
+                i = 0
+                biggest_image_size = size
+                feature_batch = []
+                on_features_batch = []
+                label_batch = []
+                feature_batch.append(fea)
+                on_features_batch.append(on_fea)
+                label_batch.append(lab)
+                i += 1
+            else:
+                feature_batch.append(fea)
+                on_features_batch.append(on_fea)
+                label_batch.append(lab)
+                i += 1
+
+    # last batch
+    feature_total.append(feature_batch)
+    onfeature_total.append(on_features_batch)
+    label_total.append(label_batch)
+    print('total ', len(feature_total), 'batch data loaded')
+    return list(zip(feature_total, onfeature_total, label_total)), uidList
 
 
 
@@ -134,6 +216,60 @@ def prepare_data_bidecoder(options, images_x, seqs_y):
 
     for idx, [s_x, s_y] in enumerate(zip(images_x, seqs_y)):
         x[idx, :, :heights_x[idx], :widths_x[idx]] = s_x / 255.
+        x_mask[idx, :heights_x[idx], :widths_x[idx]] = 1.
+        y_in[1:(lengths_y[idx]+1), idx] = s_y
+        y_out[:lengths_y[idx], idx] = s_y
+        y_mask[:lengths_y[idx] + 1, idx] = 1.
+
+
+    #R2L: y_in:  <eos> yn, yn-1, ..., y3, y2, y1
+    #R2L: y_out: yn, yn-1, ..., y2, y1, <sos>
+
+    y_reverse_in   = np.ones((maxlen_y, n_samples)).astype(np.int64)  # <eos> must be 0 in the dict
+    y_reverse_out  = np.zeros((maxlen_y, n_samples)).astype(np.int64)  # <eos> must be 0 in the dict
+    y_reverse_mask = np.zeros((maxlen_y, n_samples)).astype(np.float32)
+
+    for idx, [s_x, s_y] in enumerate(zip(images_x, seqs_y)):
+        y_reverse_in[1:(lengths_y[idx]+1), idx] = s_y[::-1]
+        y_reverse_out[:lengths_y[idx], idx] = s_y[::-1]
+        y_reverse_mask[:lengths_y[idx] + 1, idx] = 1.
+
+
+    return x, x_mask, y_in, y_out, y_mask, y_reverse_in, y_reverse_out, y_reverse_mask
+
+def prepare_data_bidecoder_online(options, images_x, online_x, seqs_y):
+    """
+    """
+
+
+    heights_x = [s.shape[0] for s in images_x]
+    widths_x = [s.shape[1] for s in images_x]
+    lengths_y = [len(s) for s in seqs_y]
+    n_samples = len(heights_x)
+    max_height_x = np.max(heights_x)
+    max_width_x = np.max(widths_x)
+    maxlen_y = np.max(lengths_y) + 1
+
+
+    #L2R  y_in: <sos> y1, y2, ..., yn
+    #L2R  y_out: y1, y2, ..., yn, <eos>
+    x = np.zeros((n_samples, options['input_channels'] + options['online_input_channels'] + 1, max_height_x, max_width_x)).astype(np.float32)
+    y_in  = np.zeros((maxlen_y, n_samples)).astype(np.int64)  # <sos> must be 0 in the dict
+    y_out = np.ones((maxlen_y, n_samples)).astype(np.int64)  # <eos> must be 1 in the dict
+
+    x_mask = np.zeros((n_samples, max_height_x, max_width_x)).astype(np.float32)
+    y_mask = np.zeros((maxlen_y, n_samples)).astype(np.float32)
+
+
+    for idx, [s_x, s_online_x, s_y] in enumerate(zip(images_x, online_x, seqs_y)):
+        x[idx, 0, :heights_x[idx], :widths_x[idx]] = s_x / 255.
+        s_online_x =s_online_x.astype(np.float32)
+        # s_online_x[:,:,0:-1] = s_online_x[:,:,0:-1]/(1024.)
+        s_online_length = np.sqrt(np.square(s_online_x[:,:,0]) + np.square(s_online_x[:,:,1]))
+        s_online_x[:,:,:-1] = s_online_x[:,:,:-1]/(s_online_length[:,:,None] + 1e-6)
+        x[idx, 1:3, :heights_x[idx], :widths_x[idx]] = s_online_x[:,:,:-1].transpose(2,0,1) 
+        x[idx, -1, :heights_x[idx], :widths_x[idx]] = s_online_x[:,:,-1]
+        x[idx, -2, :heights_x[idx], :widths_x[idx]] = (s_online_x[:,:,-1]>0).astype(np.float32) # TODO: 待检查
         x_mask[idx, :heights_x[idx], :widths_x[idx]] = 1.
         y_in[1:(lengths_y[idx]+1), idx] = s_y
         y_out[:lengths_y[idx], idx] = s_y

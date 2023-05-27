@@ -30,8 +30,11 @@ torch.cuda.manual_seed(1)
 torch.cuda.manual_seed_all(1)
 
 
-result_path = sys.argv[1]
-direction   = sys.argv[2]
+# result_path = sys.argv[1]
+# direction   = sys.argv[2]
+
+result_path = 'res'
+direction   = 'L2R-R2L'
 
 assert direction in ['L2R', 'R2L', 'L2R-R2L'], 'Currently, the alg supports L2R and L2RR2L options.'
 
@@ -57,9 +60,10 @@ if not os.path.exists(result_path):
 # valid_output = [result_path+ '/decode_result/']
 
 datapath = '../../TDv2/TDv2_BiTD_for_ecp/CROHME/'
+online_path = '../../data_process/'
 dictionaries = [datapath + 'dictionary.txt']
-datasets = [datapath + 'train_images.pkl', datapath + 'train_chb_labels.txt']
-valid_datasets = [datapath + '14_test_images.pkl', datapath + '14_chb_test_labels.txt']
+datasets = [datapath + 'train_images.pkl',online_path + 'online_flow_train_feature.pkl', datapath + 'train_chb_labels.txt']
+valid_datasets = [datapath + '14_test_images.pkl',online_path + 'online_flow_test_feature.pkl', datapath + '14_chb_test_labels.txt']
 valid_output = [result_path+ '/decode_result/']
 
 if not os.path.exists(valid_output[0]):
@@ -105,7 +109,7 @@ print('halfFlag:',halfLrFlag_set)
 print('batch_size:',batch_size)
 print('batch_size_valid:',valid_batch_size)
 print('multi_gpu:',multi_gpu_flag)
-print('os.environ:',os.environ['CUDA_VISIBLE_DEVICES'])
+# print('os.environ:',os.environ['CUDA_VISIBLE_DEVICES'])
 print('valid_out:',valid_output)
 print('pretrained_use:',use_pretrianed_model)
 print('pretrianed_model_path:',pretrained_model_path)
@@ -142,10 +146,10 @@ for kk, vv in worddicts.items():
     worddicts_r[vv] = kk
 
 # load data
-train, train_uid_list = dataIterator(datasets[0], datasets[1], worddicts, batch_size=batch_size,
+train, train_uid_list = dataIterator_online(datasets[0], datasets[1], datasets[2], worddicts, batch_size=batch_size,
                                      batch_Imagesize=batch_Imagesize, maxlen=maxlen, maxImagesize=maxImagesize)
 
-valid, valid_uid_list = dataIterator(valid_datasets[0], valid_datasets[1], worddicts, batch_size=valid_batch_size,
+valid, valid_uid_list = dataIterator_online(valid_datasets[0], valid_datasets[1], valid_datasets[2], worddicts, batch_size=valid_batch_size,
                                      batch_Imagesize=valid_batch_Imagesize, maxlen=maxlen, maxImagesize=maxImagesize)
 
 # display
@@ -227,13 +231,13 @@ for eidx in range(max_epochs):
 
     uidx =0 
 
-    for x, y in train:
+    for x, on_x, y in train:
         model.train()
         ud_start = time.time()
         n_samples += len(x)
         uidx += 1
 
-        x, x_mask, y,y_out, y_mask, y_reverse,y_reverse_out, y_reverse_mask = prepare_data_bidecoder(params, x, y)
+        x, x_mask, y,y_out, y_mask, y_reverse,y_reverse_out, y_reverse_mask = prepare_data_bidecoder_online(params, x, on_x, y)
 
         x = torch.from_numpy(x).cuda()
         x_mask = torch.from_numpy(x_mask).cuda()
